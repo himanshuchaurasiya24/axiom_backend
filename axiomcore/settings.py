@@ -3,8 +3,8 @@ from datetime import timedelta
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-dpq@q2rh0z10)qj2qj0pu*ftl_p+ycq#th4f)z(s&a7)4&^+jn'
 DEBUG = True
+SECRET_KEY = 'django-insecure-+@(awooy=f=qwd#@1(o_ou0$^i+s5*141#gi5$^emsgv$n8d!d'
 ALLOWED_HOSTS = []
 
 # Allow requests from your Flutter web app's origin during development
@@ -83,7 +83,7 @@ SIMPLE_JWT = {
 }
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = 'static/'

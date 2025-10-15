@@ -1,8 +1,10 @@
+
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from .models import User
+from rest_framework import serializers
 from .serializers import (
     UserRegistrationSerializer, 
     KeyResetSerializer, 
@@ -25,7 +27,7 @@ class UserAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         return UserDetailSerializer
 
     def get_permissions(self):
-        if self.action in ['create', 'reset_key']:
+        if self.action in ['create', 'reset_key', 'get_salt']:
             self.permission_classes = [AllowAny]
         else:
             self.permission_classes = [IsAuthenticated]
@@ -36,12 +38,24 @@ class UserAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         user = request.user
         serializer = self.get_serializer(user)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='get-salt')
+    def get_salt(self, request):
+        username = request.query_params.get('username')
+        if not username:
+            return Response({'error': 'Username query parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(username=username)
+            return Response({'salt': user.salt, 'username': user.username})
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
         
     @action(detail=False, methods=['post'], url_path='reset-key')
     def reset_key(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             user = serializer.instance
+            user.salt = serializer.validated_data['new_salt']
             user.key_hash = serializer.validated_data['new_key_hash']
             user.encrypted_dek = serializer.validated_data['new_encrypted_dek']
             user.save()

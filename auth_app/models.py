@@ -3,9 +3,10 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 import uuid
 
 class UserManager(BaseUserManager):
-    def create_user(self, username, key_hash, recovery_key_hash, recovery_salt, encrypted_dek, **extra_fields):
+    def create_user(self, username, salt, key_hash, recovery_key_hash, recovery_salt, encrypted_dek, **extra_fields):
         user = self.model(
-            username=username, 
+            username=username,
+            salt=salt,
             key_hash=key_hash, 
             recovery_key_hash=recovery_key_hash,
             recovery_salt=recovery_salt,
@@ -15,14 +16,17 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, username, key_hash, password=None, **extra_fields):
+    def create_superuser(self, username, password, **extra_fields):
+        # Note: The superuser does not follow the zero-knowledge model for simplicity.
+        extra_fields.setdefault('salt', 'dummy_salt_for_admin')
+        extra_fields.setdefault('key_hash', 'dummy_hash_for_admin')
         extra_fields.setdefault('recovery_key_hash', 'dummy_hash')
         extra_fields.setdefault('recovery_salt', 'dummy_salt')
         extra_fields.setdefault('encrypted_dek', 'dummy_dek')
-        user = self.create_user(username, key_hash, **extra_fields)
+        user = self.model(username=username, **extra_fields)
+        user.set_password(password) # Use standard Django password hashing for admin
         user.is_staff = True
         user.is_superuser = True
-        user.set_password(password if password else 'adminpassword')
         user.save(using=self._db)
         return user
 
@@ -40,4 +44,5 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     objects = UserManager()
     USERNAME_FIELD = 'username'
-    REQUIRED_FIELDS = ['key_hash']
+    # No required fields for createsuperuser to prompt for custom fields
+    REQUIRED_FIELDS = []

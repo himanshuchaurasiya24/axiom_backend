@@ -7,7 +7,8 @@ DEBUG = True
 SECRET_KEY = 'django-insecure-+@(awooy=f=qwd#@1(o_ou0$^i+s5*141#gi5$^emsgv$n8d!d'
 
 # Allow connections from any host in development (restrict in production!)
-ALLOWED_HOSTS = ['192.168.31.76', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['192.168.31.76', 'localhost',
+ '127.0.0.1']
 
 # Allow requests from your Flutter app
 CORS_ALLOWED_ORIGINS = [

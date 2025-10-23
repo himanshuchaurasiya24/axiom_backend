@@ -13,7 +13,3 @@ class FileMetadata(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-
-class FileContent(models.Model):
-    metadata = models.OneToOneField(FileMetadata, on_delete=models.CASCADE, primary_key=True, related_name='content')
-    encrypted_blob = models.TextField()

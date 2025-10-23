@@ -1,10 +1,6 @@
 from rest_framework import serializers
-from .models import FileMetadata, FileContent
+from .models import FileMetadata
 
-class FileContentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = FileContent
-        fields = ['encrypted_blob']
 
 class FileMetadataSerializer(serializers.ModelSerializer):
     class Meta:

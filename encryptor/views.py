@@ -1,16 +1,25 @@
+import os
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.filters import SearchFilter
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.conf import settings
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import FileMetadata
 from .serializers import FileMetadataSerializer
-from django.conf import settings
-import os
+from .pagination import StandardResultsSetPagination
+from .filter import FileFilter
 
 class FileViewSet(viewsets.ModelViewSet):
     serializer_class = FileMetadataSerializer
     permission_classes = [IsAuthenticated]
-
+    authentication_classes= [JWTAuthentication]
+    pagination_class = StandardResultsSetPagination
+    filter_backends= [DjangoFilterBackend, SearchFilter]
+    filterset_class = FileFilter
+    search_fields = ['file_name','file_type','category','created_at']
     def get_queryset(self):
         return FileMetadata.objects.filter(owner=self.request.user)
 
@@ -18,11 +27,8 @@ class FileViewSet(viewsets.ModelViewSet):
         serializer.save(owner=self.request.user)
     
     def _get_content_filepath(self, metadata_id):
-        # Create a dedicated folder for file content
         content_dir = os.path.join(settings.MEDIA_ROOT, 'file_content')
-        # Ensure the directory exists
         os.makedirs(content_dir, exist_ok=True)
-        # Return the full path for the file
         return os.path.join(content_dir, f"{metadata_id}.txt")
 
     @action(detail=True, methods=['get', 'put'], url_path='content')

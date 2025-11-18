@@ -1,12 +1,14 @@
 from django.contrib import admin
 from django.urls import path, include
-from rest_framework_simplejwt.views import TokenRefreshView
-from auth_app.views import CustomTokenObtainPairView
+from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
+from auth_app.views import CustomTokenObtainPairView, ValidateTokenView
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
+    path('verify-auth/', ValidateTokenView.as_view(), name='validate-token'),
     path('auth/', include('auth_app.urls')),
-    path('auth/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('admin/', admin.site.urls),
     path('api/', include('encryptor.urls')),
 ]

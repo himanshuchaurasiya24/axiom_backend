@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import serializers
+from rest_framework.views import APIView
 from .models import User
 from .serializers import (
     UserRegistrationSerializer, 
@@ -10,6 +11,7 @@ from .serializers import (
     UserDetailSerializer,
     PasswordChangeSerializer
 )
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -70,6 +72,19 @@ class UserAccountViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
             return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+class ValidateTokenView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        return Response({
+            "success": True,
+             "id":str(user.id),
+        "username":str(user.username),
+        'salt':str(user.salt),
+        'encrypted_dek':str(user.encrypted_dek),
+        })
+
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         key_hash = attrs.get('password')
@@ -81,7 +96,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if user.key_hash != key_hash:
             raise serializers.ValidationError("Invalid credentials.")
         refresh = self.get_token(user)
-        return {'refresh': str(refresh), 'access': str(refresh.access_token)}
+        return {'refresh': str(refresh), 
+        'access': str(refresh.access_token),
+        "id":str(user.id),
+        "username":str(user.username),
+        'salt':str(user.salt),
+        'encrypted_dek':str(user.encrypted_dek),
+        }
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer

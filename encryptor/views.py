@@ -11,20 +11,37 @@ from .models import FileMetadata
 from .serializers import FileMetadataSerializer
 from .pagination import StandardResultsSetPagination
 from .filter import FileFilter
-
+from auth_app.permissions import IsUserNotLocked
+from django.db.models import Sum
+from rest_framework import serializers
 class FileViewSet(viewsets.ModelViewSet):
     serializer_class = FileMetadataSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsUserNotLocked]
     authentication_classes= [JWTAuthentication]
     pagination_class = StandardResultsSetPagination
     filter_backends= [DjangoFilterBackend, SearchFilter]
     filterset_class = FileFilter
     search_fields = ['file_name','file_type','category','created_at']
+    # Define the total storage quota per user (4 GB)
+    STORAGE_QUOTA_GB = 0.01
+    STORAGE_QUOTA_BYTES = STORAGE_QUOTA_GB * 1024 * 1024 * 1024
     def get_queryset(self):
         return FileMetadata.objects.filter(owner=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
+        user  = self.request.user
+        new_file_size = serializer.validated_data.get('file_size',0)
+        current_usage_bytes = self.get_queryset().aggregate(Sum('file_size'))['file_size__sum'] or 0
+        projected_usage_bytes = current_usage_bytes + new_file_size
+        if projected_usage_bytes>self.STORAGE_QUOTA_BYTES:
+            current_usage_gb = current_usage_bytes/(1024*1024*1024)
+            error_message = (
+                f"Storage quota exceeded. Your current usage is {current_usage_gb:.2f} GB. "
+                f"The maximum allowed storage is {self.STORAGE_QUOTA_GB} GB. "
+                "Please delete some data or upgrade your plan."
+            )
+            raise serializers.ValidationError({'file_size': [error_message]})
+        serializer.save(owner=user)
     
     def _get_content_filepath(self, metadata_id):
         content_dir = os.path.join(settings.MEDIA_ROOT, 'file_content')

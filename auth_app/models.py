@@ -41,8 +41,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-
+    is_locked = models.BooleanField(
+        default=False,
+        help_text='If true, the user is locked out and cannot log in.'
+    )
+    
+    # ✅ Fields required by the custom token serializer
+    failed_login_attempts = models.IntegerField(default=0)
+    lockout_until = models.DateTimeField(null=True, blank=True)
     objects = UserManager()
     USERNAME_FIELD = 'username'
     # No required fields for createsuperuser to prompt for custom fields
     REQUIRED_FIELDS = []
+    def __str__(self):
+        return self.username

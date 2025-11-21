@@ -8,3 +8,12 @@ class IsUserNotLocked(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated :
             return False
         return not request.user.is_locked
+class IsSelfOrAdmin(permissions.BasePermission):
+    """
+    Custom permission to only allow the user to retrieve/modify their own object.
+    Admins (is_staff or is_superuser) are granted full access.
+    """
+    def has_object_permission(self, request, view, obj):
+        if request.user.is_staff or request.user.is_superuser:
+            return True            
+        return obj == request.user

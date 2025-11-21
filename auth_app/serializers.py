@@ -9,7 +9,7 @@ from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'salt', 'encrypted_dek', 'created_at']
+        fields = ['id', 'username', 'salt', 'encrypted_dek', 'created_at', 'subscription_plan']
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     recovery_key = serializers.CharField(read_only=True)

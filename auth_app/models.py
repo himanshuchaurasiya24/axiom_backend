@@ -29,10 +29,19 @@ class UserManager(BaseUserManager):
         user.is_superuser = True
         user.save(using=self._db)
         return user
-
+class SubscriptionPlan(models.TextChoices):
+    FREE= "FREE","Free Tier"
+    STANDARD = "STANDARD","Standard Tier"
+    PRO= "PRO","Pro Tier"
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     username = models.CharField(max_length=255, unique=True)
+    
+    subscription_plan = models.CharField(max_length=10, 
+    choices = SubscriptionPlan.choices, 
+    default= SubscriptionPlan.FREE, 
+    help_text="Current Subscription Tier")
+
     salt = models.CharField(max_length=255)
     key_hash = models.CharField(max_length=255)
     encrypted_dek = models.TextField() # Stores the encrypted Data Encryption Key

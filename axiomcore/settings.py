@@ -1,6 +1,13 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+def GB_TO_BYTES(gb):
+    return gb*1024*1024*1024
+STORAGE_QUOTAS = {
+    'FREE': GB_TO_BYTES(0.01),       # 1 GB Limit
+    'STANDARD': GB_TO_BYTES(4),   # 4 GB Limit
+    'PRO': float('inf'),          # Unlimited (allows any file size)
+}
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-+@(awooy=f=qwd#@1(o_ou0$^i+s5*141#gi5$^emsgv$n8d!d'

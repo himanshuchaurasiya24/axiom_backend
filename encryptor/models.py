@@ -3,10 +3,16 @@ from django.conf import settings
 from auth_app.models import User
 import uuid
 class Category(models.Model):
-    category= models.CharField(max_length=20, unique= True)
+    category= models.CharField(max_length=20)
     owner = models.ForeignKey(User, on_delete= models.CASCADE, related_name='categories')
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['category', 'owner'], name = 'unique_category_per_owner')
+        ]
+        
     def __str__(self):
             return f"{self.category}, owned by {self.owner}"
+
 class FileMetadata(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='files')

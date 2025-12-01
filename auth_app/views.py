@@ -117,15 +117,19 @@ class ValidateTokenView(APIView):
 
     def get(self, request):
         user = request.user
+        if user.is_locked:
+            return Response(
+                {"detail": "User account is locked."}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
         return Response({
         # "success": True,
         "id":str(user.id),
         "username":str(user.username),
         'salt':str(user.salt),
         'encrypted_dek':str(user.encrypted_dek),
-        'subscription_plan':str(user.subscription_plan)
-
-        })
+        'subscription_plan':str(user.subscription_plan),
+        'is_locked':str(user.is_locked)})
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     MAX_FAILED_ATTEMPTS = 3
@@ -175,8 +179,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "username": str(self.user.username),
             'salt': str(self.user.salt),
             'encrypted_dek': str(self.user.encrypted_dek),
-            'subscription_plan':str(self.user.subscription_plan)
+            'subscription_plan':str(self.user.subscription_plan),
+            'is_locked':str(self.user.is_locked)
+
         }
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+class AppInfoView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, format=None):
+        min_version = getattr(settings, 'MINIMUM_APP_VERSION', None)
+        data = {"minimum_required_version": min_version}
+        return Response(data)

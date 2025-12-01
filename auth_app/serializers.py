@@ -151,4 +151,5 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "username": str(self.user.username),
             'salt': str(self.user.salt),
             'encrypted_dek': str(self.user.encrypted_dek),
+            'is_locked':str(self.user.is_locked)
         }

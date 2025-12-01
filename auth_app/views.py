@@ -118,8 +118,8 @@ class ValidateTokenView(APIView):
     def get(self, request):
         user = request.user
         return Response({
-            "success": True,
-             "id":str(user.id),
+        # "success": True,
+        "id":str(user.id),
         "username":str(user.username),
         'salt':str(user.salt),
         'encrypted_dek':str(user.encrypted_dek),

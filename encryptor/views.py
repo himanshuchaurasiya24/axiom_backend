@@ -9,11 +9,21 @@ from django.conf import settings
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum
 from rest_framework import serializers
-from .models import FileMetadata
-from .serializers import FileMetadataSerializer
+from .models import FileMetadata, Category
+from .serializers import FileMetadataSerializer, CategorySerializer
 from .pagination import StandardResultsSetPagination
 from .filter import FileFilter
 from auth_app.permissions import IsUserNotLocked
+class CategoryViewSet(viewsets.ModelViewSet):
+    serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticated, IsUserNotLocked]
+    authentication_classes= [JWTAuthentication]
+    def get_queryset(self):
+        return Category.objects.filter(owner = self.request.user)
+    def perform_create(self, serializer):
+        serializer.save(owner= self.request.user)
+    def perform_update(self, serializer):
+        serializer.save(owner = self.request.user)
 
 class FileViewSet(viewsets.ModelViewSet):
     serializer_class = FileMetadataSerializer

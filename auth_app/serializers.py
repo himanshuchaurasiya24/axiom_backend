@@ -12,35 +12,39 @@ class UserDetailSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'salt', 'encrypted_dek', 'created_at', 'subscription_plan']
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    recovery_key = serializers.CharField(read_only=True)
-
+    # Removed recovery_key output because client generates it now
     class Meta:
         model = User
-        fields = ['username', 'salt', 'key_hash', 'encrypted_dek', 'recovery_key']
+        # Added recovery_encrypted_dek to fields
+        fields = [
+            'username', 'salt', 'key_hash', 'encrypted_dek', 
+            'recovery_encrypted_dek', 'recovery_key_hash', 'recovery_salt'
+        ]
         extra_kwargs = {
             'salt': {'write_only': True},
             'key_hash': {'write_only': True},
             'encrypted_dek': {'write_only': True},
-            'recovery_key': {'read_only': True},
+            'recovery_encrypted_dek': {'write_only': True},
+            'recovery_key_hash': {'write_only': True},
+            'recovery_salt': {'write_only': True},
         }
 
     def create(self, validated_data):
-        recovery_salt = generate_secure_token(16)
-        recovery_key_plaintext = generate_secure_token(32)
-        recovery_key_hashed = hash_token(recovery_key_plaintext, recovery_salt)
-
+        # Simply pass all client-generated data to the model
         user = User.objects.create_user(
             username=validated_data['username'],
             salt=validated_data['salt'],
             key_hash=validated_data['key_hash'],
             encrypted_dek=validated_data['encrypted_dek'],
-            recovery_key_hash=recovery_key_hashed,
-            recovery_salt=recovery_salt
+            recovery_encrypted_dek=validated_data['recovery_encrypted_dek'],
+            recovery_key_hash=validated_data['recovery_key_hash'],
+            recovery_salt=validated_data['recovery_salt']
         )
-        user.recovery_key = recovery_key_plaintext
         return user
 
 class KeyResetSerializer(serializers.Serializer):
+    # This serializer might be deprecated in favor of Initiate/Finalize flows
+    # but kept for compatibility with the simple reset endpoint if you still use it.
     username = serializers.CharField(write_only=True)
     recovery_key = serializers.CharField(write_only=True)
     new_salt = serializers.CharField(write_only=True)
@@ -53,12 +57,57 @@ class KeyResetSerializer(serializers.Serializer):
         except User.DoesNotExist:
             raise serializers.ValidationError("Invalid credentials provided.")
 
-        provided_key_hash = hash_token(data['recovery_key'], user.recovery_salt)
-        if provided_key_hash != user.recovery_key_hash:
-            raise serializers.ValidationError("Invalid credentials provided.")
+        # Logic for simple key reset (data loss scenario) would go here
+        # For true recovery, use InitiateRecoverySerializer
         
         self.instance = user
         return data
+
+class InitiateRecoverySerializer(serializers.Serializer):
+    username = serializers.CharField(write_only=True)
+    recovery_key_hash = serializers.CharField(write_only=True)
+    
+    # Outputs needed for client to decrypt DEK
+    recovery_encrypted_dek = serializers.CharField(read_only=True)
+    recovery_salt = serializers.CharField(read_only=True) # Useful if client didn't cache it
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid credentials.")
+
+        # Verify the hash sent by client matches stored hash
+        if data['recovery_key_hash'] != user.recovery_key_hash:
+             raise serializers.ValidationError("Invalid Recovery Key.")
+        
+        # Pass data to view
+        return {
+            'user': user,
+            'recovery_encrypted_dek': user.recovery_encrypted_dek,
+            'recovery_salt': user.recovery_salt
+        }
+
+class FinalizeRecoverySerializer(serializers.Serializer):
+    username = serializers.CharField(write_only=True)
+    new_salt = serializers.CharField(write_only=True)
+    new_key_hash = serializers.CharField(write_only=True)
+    new_encrypted_dek = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        try:
+            self.user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User not found.")
+        return data
+
+    def save(self):
+        user = self.user
+        user.salt = self.validated_data['new_salt']
+        user.key_hash = self.validated_data['new_key_hash']
+        user.encrypted_dek = self.validated_data['new_encrypted_dek']
+        user.save()
+        return user
 
 class PasswordChangeSerializer(serializers.Serializer):
     new_salt = serializers.CharField(write_only=True)
@@ -72,76 +121,49 @@ class PasswordChangeSerializer(serializers.Serializer):
         instance.save(update_fields=['salt', 'key_hash', 'encrypted_dek'])
         return instance
 
-# --- Custom Token Serializer (FIXED) ---
-
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     MAX_FAILED_ATTEMPTS = 3
-    LOCKOUT_DURATION = 15 # IT IS IN MINUTES.
+    LOCKOUT_DURATION = 15 
     
     def validate(self, attrs):
         username = attrs.get('username')
-        key_hash = attrs.get('password') # Client sends the key_hash in the 'password' field
+        key_hash = attrs.get('password')
 
-        # 1. User Lookup
         try:
             user = User.objects.get(username=username)
         except User.DoesNotExist:
-            raise AuthenticationFailed("Invalid credentials.") 
+            raise AuthenticationFailed("Invalid credentials.")
 
-        # 2. Check and Clear Lockout Status
-        now = timezone.now()
+        if user.is_locked and not user.lockout_until:
+             raise PermissionDenied("Account is locked. Please contact support.")
         
-        # A. Check if account is actively locked due to failed attempts (lockout_until is in the future)
+        now = timezone.now()
         if user.is_locked and user.lockout_until and now < user.lockout_until:
             time_left = (user.lockout_until - now)
             minutes_left = (time_left.total_seconds() + 59) // 60
-            raise PermissionDenied(f"Account is locked due to failed attempts. Please try again in {int(minutes_left)} minutes.")
-        
-        # B. Check if account is locked but the time has expired (SYSTEM AUTO-UNLOCK)
-        # This only happens if lockout_until is set (meaning it was a system lock)
+            raise PermissionDenied(f"Account is locked. Try again in {int(minutes_left)} minutes.")
         elif user.is_locked and user.lockout_until and now >= user.lockout_until:
-            # Lockout period has expired - clear the lock fields before proceeding
             user.is_locked = False
             user.lockout_until = None
             user.failed_login_attempts = 0
             user.save()
-            # Execution continues to Step 3
-            
-        # C. New check: If is_locked is True, but lockout_until is None or in the past, 
-        # assume this is a PERMANENT ADMIN LOCK.
-        elif user.is_locked and not user.lockout_until:
-             # This prevents login if an admin explicitly set is_locked=True without a time limit
-             # The user must contact the admin to unlock.
-             raise PermissionDenied("Account is locked. Please contact support to unlock your account.")
 
-
-        # 3. Perform Key Hash Authentication
         if user.key_hash != key_hash:
-            # Key hash failed - update failed attempts and potentially lock account
             user.failed_login_attempts += 1
-            
             if user.failed_login_attempts >= self.MAX_FAILED_ATTEMPTS:
                 user.is_locked = True
                 user.lockout_until = timezone.now() + timedelta(minutes=self.LOCKOUT_DURATION)
                 user.save()
-                raise AuthenticationFailed(f"Account locked due to {self.MAX_FAILED_ATTEMPTS} failed attempts. Please try again after {self.LOCKOUT_DURATION} minutes.")
-            
+                raise AuthenticationFailed(f"Account locked due to failed attempts.")
             user.save()
             raise AuthenticationFailed("Invalid username or password.")
 
-        # 4. Authentication Successful - Reset attempts and set self.user
-        
-        # CRITICAL FIX: Only reset failed_login_attempts and lockout_until.
-        # DO NOT set user.is_locked = False here. If an admin set it to True 
-        # without a time limit, we respect that lock (handled in 2.C).
         if user.failed_login_attempts > 0 or user.lockout_until is not None:
             user.failed_login_attempts = 0
             user.lockout_until = None
             user.save()
         
-        # Manually set self.user for token generation
         self.user = user 
-        
         refresh = self.get_token(self.user)
         
         return {
@@ -151,5 +173,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "username": str(self.user.username),
             'salt': str(self.user.salt),
             'encrypted_dek': str(self.user.encrypted_dek),
-            'is_locked':str(self.user.is_locked)
+            'subscription_plan': str(self.user.subscription_plan),
+            'is_locked': str(self.user.is_locked)
         }

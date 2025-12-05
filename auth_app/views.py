@@ -2,20 +2,21 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission, IsAdminUser
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.views import TokenObtainPairView
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.conf import settings
 from .models import User
 from .serializers import (
     UserRegistrationSerializer, 
-    KeyResetSerializer, 
+    InitiateRecoverySerializer,
+    FinalizeRecoverySerializer,
     UserDetailSerializer,
-    PasswordChangeSerializer
+    PasswordChangeSerializer,
+    CustomTokenObtainPairSerializer
 )
 from .permissions import IsSelfOrAdmin
 
@@ -32,8 +33,10 @@ class UserAccountViewSet(
     def get_serializer_class(self):
         if self.action == 'create':
             return UserRegistrationSerializer
-        elif self.action == 'reset_key':
-            return KeyResetSerializer
+        elif self.action == 'initiate_recovery':
+            return InitiateRecoverySerializer
+        elif self.action == 'finalize_recovery':
+            return FinalizeRecoverySerializer
         elif self.action == 'change_password':
             return PasswordChangeSerializer
         
@@ -50,7 +53,8 @@ class UserAccountViewSet(
         return User.objects.filter(pk=user.pk)
 
     def get_permissions(self):
-        if self.action in ['create', 'reset_key', 'get_salt']:
+        # AllowAny for registration, salt fetching, and recovery steps
+        if self.action in ['create', 'get_salt', 'get_recovery_salt', 'initiate_recovery', 'finalize_recovery']:
             self.permission_classes = [AllowAny]
         elif self.action == 'list':
             self.permission_classes = [IsAdminUser]
@@ -61,12 +65,10 @@ class UserAccountViewSet(
         return super().get_permissions()
 
     def perform_update(self, serializer):
-        """
-        Enforces that only admin users can change the 'subscription_plan'.
-        """
         user = self.request.user
-        instance = self.get_object() # The user being updated
+        instance = self.get_object()
         
+        # Protect subscription plan changes
         if 'subscription_plan' in serializer.validated_data:
             new_plan = serializer.validated_data['subscription_plan']
             current_plan = instance.subscription_plan
@@ -90,17 +92,38 @@ class UserAccountViewSet(
             return Response({'salt': user.salt, 'username': user.username})
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
-        
-    @action(detail=False, methods=['post'], url_path='reset-key')
-    def reset_key(self, request):
+
+    # --- Get Salt specifically for Recovery Key hashing ---
+    @action(detail=False, methods=['get'], url_path='get-recovery-salt')
+    def get_recovery_salt(self, request):
+        username = request.query_params.get('username')
+        if not username:
+            return Response({'error': 'Username query parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(username=username)
+            return Response({'recovery_salt': user.recovery_salt})
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # --- Step 1 of Recovery (Get Encrypted DEK) ---
+    @action(detail=False, methods=['post'], url_path='initiate-recovery')
+    def initiate_recovery(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.instance
-            user.salt = serializer.validated_data['new_salt']
-            user.key_hash = serializer.validated_data['new_key_hash']
-            user.encrypted_dek = serializer.validated_data['new_encrypted_dek']
-            user.save()
-            return Response({"message": "Your key has been reset successfully."}, status=status.HTTP_200_OK)
+            # Return the encrypted backup envelope so the client can decrypt the DEK
+            return Response({
+                "recovery_encrypted_dek": serializer.validated_data['recovery_encrypted_dek'],
+                "recovery_salt": serializer.validated_data['recovery_salt']
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # --- Step 2 of Recovery (Save new Password data) ---
+    @action(detail=False, methods=['post'], url_path='finalize-recovery')
+    def finalize_recovery(self, request):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Account recovered successfully. Please log in with your new password."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'], url_path='change-password')
@@ -123,69 +146,17 @@ class ValidateTokenView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         return Response({
-        # "success": True,
-        "id":str(user.id),
-        "username":str(user.username),
-        'salt':str(user.salt),
-        'encrypted_dek':str(user.encrypted_dek),
-        'subscription_plan':str(user.subscription_plan),
-        'is_locked':str(user.is_locked)})
-
-class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    MAX_FAILED_ATTEMPTS = 3
-    LOCKOUT_DURATION = 15 # IT IS IN MINUTES.
-    
-    def validate(self, attrs):
-        username = attrs.get('username')
-        key_hash = attrs.get('password')
-
-        try:
-            user = User.objects.get(username=username)
-        except User.DoesNotExist:
-            raise AuthenticationFailed("Invalid credentials.")
-
-        if user.is_locked and not user.lockout_until:
-             raise PermissionDenied("Account is locked. Please contact an administrator to unlock your account.")
-        
-        now = timezone.now()
-        if user.is_locked and user.lockout_until and now < user.lockout_until:
-            time_left = (user.lockout_until - now)
-            minutes_left = (time_left.total_seconds() + 59) // 60
-            raise PermissionDenied(f"Account is locked due to failed attempts. Please try again in {int(minutes_left)} minutes.")
-
-        if user.key_hash != key_hash:
-            user.failed_login_attempts += 1
-            if user.failed_login_attempts >= self.MAX_FAILED_ATTEMPTS:
-                user.is_locked = True
-                user.lockout_until = timezone.now() + timedelta(minutes=self.LOCKOUT_DURATION)
-                user.save()
-                raise AuthenticationFailed(f"Account locked due to {self.MAX_FAILED_ATTEMPTS} failed attempts. Please try again after {self.LOCKOUT_DURATION} minutes.")
-            user.save()
-            raise AuthenticationFailed("Invalid username or password.")
-
-        if user.failed_login_attempts > 0 or user.lockout_until is not None:
-            user.failed_login_attempts = 0
-            user.lockout_until = None
-            user.save()
-        
-        self.user = user 
-        
-        refresh = self.get_token(self.user)
-        
-        return {
-            'refresh': str(refresh), 
-            'access': str(refresh.access_token),
-            "id": str(self.user.id),
-            "username": str(self.user.username),
-            'salt': str(self.user.salt),
-            'encrypted_dek': str(self.user.encrypted_dek),
-            'subscription_plan':str(self.user.subscription_plan),
-            'is_locked':str(self.user.is_locked)
-
-        }
+            "id":str(user.id),
+            "username":str(user.username),
+            'salt':str(user.salt),
+            'encrypted_dek':str(user.encrypted_dek),
+            'subscription_plan':str(user.subscription_plan),
+            'is_locked':str(user.is_locked)
+        })
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+
 class AppInfoView(APIView):
     permission_classes = [AllowAny]
 

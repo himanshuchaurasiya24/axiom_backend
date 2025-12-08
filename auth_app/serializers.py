@@ -55,8 +55,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         except User.DoesNotExist:
             raise AuthenticationFailed("Invalid credentials.")
 
+        # --- 1. Account Locking Check (Keep this first to prevent brute force on locked accounts) ---
         if user.is_locked and not user.lockout_until:
              raise PermissionDenied("Account is locked. Please contact support.")
+        
         now = timezone.now()
         if user.is_locked and user.lockout_until and now < user.lockout_until:
             time_left = (user.lockout_until - now)
@@ -67,9 +69,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             user.lockout_until = None
             user.failed_login_attempts = 0
             user.save()
-        if not (user.is_staff or user.is_superuser):
-            if not user.is_subscription_active:
-                raise AuthenticationFailed("Your plan has expired. To login, you need to upgrade your account.")
+
+        # --- 2. Password Validation (MOVED UP) ---
+        # ⭐️ We check password BEFORE checking subscription status
         if user.key_hash != key_hash:
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= self.MAX_FAILED_ATTEMPTS:
@@ -84,6 +86,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             user.failed_login_attempts = 0
             user.lockout_until = None
             user.save()
+
+        # --- 3. Subscription Expiry Check (MOVED DOWN) ---
+        # ⭐️ Only check this if the password was correct
+        if not (user.is_staff or user.is_superuser):
+            if not user.is_subscription_active:
+                # Now we know the user is who they say they are, so it's safe to tell them about the plan
+                raise AuthenticationFailed("Your plan has expired. To login, you need to upgrade your account.")
+
         
         self.user = user 
         refresh = self.get_token(self.user)
@@ -98,7 +108,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'subscription_plan': str(self.user.subscription_plan),
             'upload_limit_mb': self.user.upload_limit_mb,
             'is_locked': str(self.user.is_locked),
-            'days_left':str(self.user.days_left)            
+            'days_left':str(self.user.days_left)
         }
 
 class InitiateRecoverySerializer(serializers.Serializer):

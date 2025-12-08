@@ -120,4 +120,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         return timezone.now() < self.subscription_expiry
     @property
     def days_left(self):
-        return self.subscription_expiry-timezone.now()
+        if not self.subscription_expiry:
+            return -1
+            
+        remaining = self.subscription_expiry - timezone.now()
+        
+        if remaining.total_seconds() < 0:
+            return 0
+            
+        return remaining.days

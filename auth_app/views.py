@@ -127,31 +127,40 @@ class UserAccountViewSet(
             serializer.save()
             return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 class ValidateTokenView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    # 1. Remove IsSubscriptionActive so we can check it manually inside the function
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
+        
+        # 2. Check Account Locking first
         if user.is_locked:
             return Response({"detail": "User account is locked."}, status=status.HTTP_403_FORBIDDEN)
+        if not (user.is_staff or user.is_superuser):
+            if not user.is_subscription_active:
+                return Response(
+                    {"detail": "Your plan has expired. To login, you need to upgrade your account."}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
         
         return Response({
-            "id":str(user.id),
-            "username":str(user.username),
-            'salt':str(user.salt),
-            'encrypted_dek':str(user.encrypted_dek),
-            'subscription_plan':str(user.subscription_plan),
+            "id": str(user.id),
+            "username": str(user.username),
+            'salt': str(user.salt),
+            'encrypted_dek': str(user.encrypted_dek),
+            'subscription_plan': str(user.subscription_plan),
             'subscription_expiry': str(user.subscription_expiry),
             'upload_limit_mb': user.upload_limit_mb,
-            'is_locked':str(user.is_locked),
-            'days_left':str(self.user.days_left)
+            'is_locked': str(user.is_locked),
+            'days_left': str(user.days_left) 
         })
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
 class AppInfoView(APIView):
+    authentication_classes=[]
     permission_classes = [AllowAny]
     def get(self, request, format=None):
         min_version = getattr(settings, 'MINIMUM_APP_VERSION', None)

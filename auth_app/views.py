@@ -18,7 +18,7 @@ from .serializers import (
     PasswordChangeSerializer,
     CustomTokenObtainPairSerializer
 )
-from .permissions import IsSelfOrAdmin
+from .permissions import IsSelfOrAdmin, IsSubscriptionActive
 
 class UserAccountViewSet(
     mixins.CreateModelMixin, 
@@ -43,25 +43,21 @@ class UserAccountViewSet(
         return UserDetailSerializer 
 
     def get_queryset(self):
-        """
-        Admins see all users. Regular users only see their own account.
-        """
         user = self.request.user
-        
         if user.is_authenticated and (user.is_staff or user.is_superuser):
             return super().get_queryset()        
         return User.objects.filter(pk=user.pk)
 
     def get_permissions(self):
-        # AllowAny for registration, salt fetching, and recovery steps
         if self.action in ['create', 'get_salt', 'get_recovery_salt', 'initiate_recovery', 'finalize_recovery']:
             self.permission_classes = [AllowAny]
         elif self.action == 'list':
             self.permission_classes = [IsAdminUser]
         elif self.action in ['retrieve', 'update', 'partial_update', 'destroy']:
-            self.permission_classes = [IsAuthenticated, IsSelfOrAdmin]
+            # Added IsSubscriptionActive to prevent expired users from modifying data
+            self.permission_classes = [IsAuthenticated, IsSelfOrAdmin, IsSubscriptionActive]
         else:
-            self.permission_classes = [IsAuthenticated]            
+            self.permission_classes = [IsAuthenticated, IsSubscriptionActive]            
         return super().get_permissions()
 
     def perform_update(self, serializer):
@@ -73,7 +69,8 @@ class UserAccountViewSet(
             new_plan = serializer.validated_data['subscription_plan']
             current_plan = instance.subscription_plan
             if new_plan != current_plan and not (user.is_staff or user.is_superuser):
-                raise PermissionDenied("Only administrators can change the subscription plan.")        
+                raise PermissionDenied("Only administrators can change the subscription plan manually.")
+        
         serializer.save()
 
     @action(detail=False, methods=['get'])
@@ -93,7 +90,6 @@ class UserAccountViewSet(
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    # --- Get Salt specifically for Recovery Key hashing ---
     @action(detail=False, methods=['get'], url_path='get-recovery-salt')
     def get_recovery_salt(self, request):
         username = request.query_params.get('username')
@@ -105,25 +101,22 @@ class UserAccountViewSet(
         except User.DoesNotExist:
             return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    # --- Step 1 of Recovery (Get Encrypted DEK) ---
     @action(detail=False, methods=['post'], url_path='initiate-recovery')
     def initiate_recovery(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            # Return the encrypted backup envelope so the client can decrypt the DEK
             return Response({
                 "recovery_encrypted_dek": serializer.validated_data['recovery_encrypted_dek'],
                 "recovery_salt": serializer.validated_data['recovery_salt']
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # --- Step 2 of Recovery (Save new Password data) ---
     @action(detail=False, methods=['post'], url_path='finalize-recovery')
     def finalize_recovery(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
-            return Response({"message": "Account recovered successfully. Please log in with your new password."}, status=status.HTTP_200_OK)
+            return Response({"message": "Account recovered successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'], url_path='change-password')
@@ -136,22 +129,23 @@ class UserAccountViewSet(
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ValidateTokenView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
 
     def get(self, request):
         user = request.user
         if user.is_locked:
-            return Response(
-                {"detail": "User account is locked."}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"detail": "User account is locked."}, status=status.HTTP_403_FORBIDDEN)
+        
         return Response({
             "id":str(user.id),
             "username":str(user.username),
             'salt':str(user.salt),
             'encrypted_dek':str(user.encrypted_dek),
             'subscription_plan':str(user.subscription_plan),
-            'is_locked':str(user.is_locked)
+            'subscription_expiry': str(user.subscription_expiry),
+            'upload_limit_mb': user.upload_limit_mb,
+            'is_locked':str(user.is_locked),
+            'days_left':str(self.user.days_left)
         })
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -159,8 +153,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 class AppInfoView(APIView):
     permission_classes = [AllowAny]
-
     def get(self, request, format=None):
         min_version = getattr(settings, 'MINIMUM_APP_VERSION', None)
-        data = {"minimum_required_version": min_version}
-        return Response(data)
+        return Response({"minimum_required_version": min_version})

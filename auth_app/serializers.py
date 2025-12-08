@@ -9,13 +9,14 @@ from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'salt', 'encrypted_dek', 'created_at', 'subscription_plan']
+        fields = [
+            'id', 'username', 'salt', 'encrypted_dek', 'created_at', 
+            'subscription_plan', 'subscription_expiry', 'upload_limit_mb'
+        ]
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    # Removed recovery_key output because client generates it now
     class Meta:
         model = User
-        # Added recovery_encrypted_dek to fields
         fields = [
             'username', 'salt', 'key_hash', 'encrypted_dek', 
             'recovery_encrypted_dek', 'recovery_key_hash', 'recovery_salt'
@@ -30,7 +31,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        # Simply pass all client-generated data to the model
         user = User.objects.create_user(
             username=validated_data['username'],
             salt=validated_data['salt'],
@@ -41,85 +41,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             recovery_salt=validated_data['recovery_salt']
         )
         return user
-
-class KeyResetSerializer(serializers.Serializer):
-    # This serializer might be deprecated in favor of Initiate/Finalize flows
-    # but kept for compatibility with the simple reset endpoint if you still use it.
-    username = serializers.CharField(write_only=True)
-    recovery_key = serializers.CharField(write_only=True)
-    new_salt = serializers.CharField(write_only=True)
-    new_key_hash = serializers.CharField(write_only=True)
-    new_encrypted_dek = serializers.CharField(write_only=True)
-
-    def validate(self, data):
-        try:
-            user = User.objects.get(username=data['username'])
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Invalid credentials provided.")
-
-        # Logic for simple key reset (data loss scenario) would go here
-        # For true recovery, use InitiateRecoverySerializer
-        
-        self.instance = user
-        return data
-
-class InitiateRecoverySerializer(serializers.Serializer):
-    username = serializers.CharField(write_only=True)
-    recovery_key_hash = serializers.CharField(write_only=True)
-    
-    # Outputs needed for client to decrypt DEK
-    recovery_encrypted_dek = serializers.CharField(read_only=True)
-    recovery_salt = serializers.CharField(read_only=True) # Useful if client didn't cache it
-
-    def validate(self, data):
-        try:
-            user = User.objects.get(username=data['username'])
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Invalid credentials.")
-
-        # Verify the hash sent by client matches stored hash
-        if data['recovery_key_hash'] != user.recovery_key_hash:
-             raise serializers.ValidationError("Invalid Recovery Key.")
-        
-        # Pass data to view
-        return {
-            'user': user,
-            'recovery_encrypted_dek': user.recovery_encrypted_dek,
-            'recovery_salt': user.recovery_salt
-        }
-
-class FinalizeRecoverySerializer(serializers.Serializer):
-    username = serializers.CharField(write_only=True)
-    new_salt = serializers.CharField(write_only=True)
-    new_key_hash = serializers.CharField(write_only=True)
-    new_encrypted_dek = serializers.CharField(write_only=True)
-
-    def validate(self, data):
-        try:
-            self.user = User.objects.get(username=data['username'])
-        except User.DoesNotExist:
-            raise serializers.ValidationError("User not found.")
-        return data
-
-    def save(self):
-        user = self.user
-        user.salt = self.validated_data['new_salt']
-        user.key_hash = self.validated_data['new_key_hash']
-        user.encrypted_dek = self.validated_data['new_encrypted_dek']
-        user.save()
-        return user
-
-class PasswordChangeSerializer(serializers.Serializer):
-    new_salt = serializers.CharField(write_only=True)
-    new_key_hash = serializers.CharField(write_only=True)
-    new_encrypted_dek = serializers.CharField(write_only=True)
-
-    def update(self, instance, validated_data):
-        instance.salt = validated_data['new_salt']
-        instance.key_hash = validated_data['new_key_hash']
-        instance.encrypted_dek = validated_data['new_encrypted_dek']
-        instance.save(update_fields=['salt', 'key_hash', 'encrypted_dek'])
-        return instance
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     MAX_FAILED_ATTEMPTS = 3
@@ -136,7 +57,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         if user.is_locked and not user.lockout_until:
              raise PermissionDenied("Account is locked. Please contact support.")
-        
         now = timezone.now()
         if user.is_locked and user.lockout_until and now < user.lockout_until:
             time_left = (user.lockout_until - now)
@@ -147,7 +67,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             user.lockout_until = None
             user.failed_login_attempts = 0
             user.save()
-
+        if not (user.is_staff or user.is_superuser):
+            if not user.is_subscription_active:
+                raise AuthenticationFailed("Your plan has expired. To login, you need to upgrade your account.")
         if user.key_hash != key_hash:
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= self.MAX_FAILED_ATTEMPTS:
@@ -174,5 +96,52 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'salt': str(self.user.salt),
             'encrypted_dek': str(self.user.encrypted_dek),
             'subscription_plan': str(self.user.subscription_plan),
-            'is_locked': str(self.user.is_locked)
+            'upload_limit_mb': self.user.upload_limit_mb,
+            'is_locked': str(self.user.is_locked),
+            'days_left':str(self.user.days_left)            
         }
+
+class InitiateRecoverySerializer(serializers.Serializer):
+    username = serializers.CharField(write_only=True)
+    recovery_key_hash = serializers.CharField(write_only=True)
+    recovery_encrypted_dek = serializers.CharField(read_only=True)
+    recovery_salt = serializers.CharField(read_only=True)
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid credentials.")
+        if data['recovery_key_hash'] != user.recovery_key_hash:
+             raise serializers.ValidationError("Invalid Recovery Key.")
+        return {'user': user, 'recovery_encrypted_dek': user.recovery_encrypted_dek, 'recovery_salt': user.recovery_salt}
+
+class FinalizeRecoverySerializer(serializers.Serializer):
+    username = serializers.CharField(write_only=True)
+    new_salt = serializers.CharField(write_only=True)
+    new_key_hash = serializers.CharField(write_only=True)
+    new_encrypted_dek = serializers.CharField(write_only=True)
+    def validate(self, data):
+        try:
+            self.user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User not found.")
+        return data
+    def save(self):
+        user = self.user
+        user.salt = self.validated_data['new_salt']
+        user.key_hash = self.validated_data['new_key_hash']
+        user.encrypted_dek = self.validated_data['new_encrypted_dek']
+        user.save()
+        return user
+
+class PasswordChangeSerializer(serializers.Serializer):
+    new_salt = serializers.CharField(write_only=True)
+    new_key_hash = serializers.CharField(write_only=True)
+    new_encrypted_dek = serializers.CharField(write_only=True)
+    def update(self, instance, validated_data):
+        instance.salt = validated_data['new_salt']
+        instance.key_hash = validated_data['new_key_hash']
+        instance.encrypted_dek = validated_data['new_encrypted_dek']
+        instance.save(update_fields=['salt', 'key_hash', 'encrypted_dek'])
+        return instance

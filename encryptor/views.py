@@ -9,10 +9,11 @@ from django.conf import settings
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum
 from .models import FileMetadata, Category
-from .serializers import FileMetadataSerializer, CategorySerializer
+from .serializers import FileMetadataSerializer, CategorySerializer,CategorySummarySerializer
 from .pagination import StandardResultsSetPagination
 from .filter import FileFilter
 from auth_app.permissions import IsUserNotLocked, IsSubscriptionActive
+from django.db.models import Count
 
 class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
@@ -91,3 +92,21 @@ class FileViewSet(viewsets.ModelViewSet):
                 return Response(status=status.HTTP_204_NO_CONTENT)
             except Exception as e:
                 return Response({"error": f"Error writing file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class CategorySummaryViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Returns a list of categories with the count of files in each.
+    Example output: [{"category": "Personal", "files_count": 12}, ...]
+    """
+    serializer_class = CategorySummarySerializer
+    permission_classes = [IsAuthenticated, IsUserNotLocked, IsSubscriptionActive]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        return Category.objects.filter(owner=user)\
+            .annotate(files_count=Count('files'))\
+            .filter(files_count__gt=0)\
+            .order_by('-files_count') 
+            # .filter(files_count__gt=0) ensures categories with 0 files are not returned

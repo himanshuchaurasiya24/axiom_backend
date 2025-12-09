@@ -34,5 +34,12 @@ class FileMetadataSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("You can only add categories you own.")
         return value
 
+class CategorySummarySerializer(serializers.ModelSerializer):
+    # This field will be populated by the annotate() in the viewset
+    files_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Category
+        fields = ['id', 'category', 'files_count']
 
         

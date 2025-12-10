@@ -1,5 +1,6 @@
 from datetime import timedelta
 from django.utils import timezone
+from django.http import JsonResponse
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
@@ -127,6 +128,8 @@ class UserAccountViewSet(
             serializer.save()
             return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+def health_check(request):
+        return JsonResponse({'status': 'running'}, status=200)
 class ValidateTokenView(APIView):
     # 1. Remove IsSubscriptionActive so we can check it manually inside the function
     permission_classes = [IsAuthenticated]

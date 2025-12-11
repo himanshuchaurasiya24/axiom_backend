@@ -13,5 +13,6 @@ urlpatterns = [
     path('api/', include('encryptor.urls')),
     path('', health_check),
     path('api/app-info/', AppInfoView.as_view(), name='app-info'),
+    path('plans/', SubscriptionInfoView.as_view(), name='subscription-plans'),
 
 ]

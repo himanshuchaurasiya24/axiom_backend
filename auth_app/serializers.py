@@ -1,10 +1,59 @@
 from rest_framework import serializers
-from .models import User
-from .utils import generate_secure_token, hash_token
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from datetime import timedelta
+from django.apps import apps
+from django.db.models import Sum
 from django.utils import timezone
+from datetime import timedelta
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from .models import User
+
+class AccountDashboardSerializer(serializers.ModelSerializer):
+    plan_display = serializers.CharField(source='get_subscription_plan_display', read_only=True)
+    used_storage_bytes = serializers.SerializerMethodField()
+    used_storage_mb = serializers.SerializerMethodField()
+    remaining_storage_mb = serializers.SerializerMethodField()
+    storage_usage_percentage = serializers.SerializerMethodField()
+    days_left = serializers.ReadOnlyField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 
+            'username', 
+            'salt', 
+            'encrypted_dek', 
+            'subscription_plan', 
+            'plan_display',
+            'subscription_expiry', 
+            'upload_limit_mb',
+            'used_storage_mb',
+            'used_storage_bytes',
+            'remaining_storage_mb',
+            'storage_usage_percentage',
+            'is_locked', 
+            'days_left'
+        ]
+
+    def get_used_storage_bytes(self, obj):
+        FileMetadata = apps.get_model('encryptor', 'FileMetadata')
+        total_bytes = FileMetadata.objects.filter(owner=obj).aggregate(total=Sum('file_size'))['total']
+        return total_bytes or 0
+
+    def get_used_storage_mb(self, obj):
+        bytes_used = self.get_used_storage_bytes(obj)
+        return round(bytes_used / (1024 * 1024), 2)
+
+    def get_remaining_storage_mb(self, obj):
+        used_mb = self.get_used_storage_mb(obj)
+        limit_mb = obj.upload_limit_mb
+        return max(0, limit_mb - used_mb)
+
+    def get_storage_usage_percentage(self, obj):
+        limit = obj.upload_limit_mb
+        if limit == 0: return 100.0
+        used = self.get_used_storage_mb(obj)
+        percent = (used / limit) * 100
+        return round(percent, 2)
 
 class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
@@ -55,7 +104,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         except User.DoesNotExist:
             raise AuthenticationFailed("Invalid credentials.")
 
-        # --- 1. Account Locking Check (Keep this first to prevent brute force on locked accounts) ---
         if user.is_locked and not user.lockout_until:
              raise PermissionDenied("Account is locked. Please contact support.")
         
@@ -70,8 +118,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             user.failed_login_attempts = 0
             user.save()
 
-        # --- 2. Password Validation (MOVED UP) ---
-        # ⭐️ We check password BEFORE checking subscription status
         if user.key_hash != key_hash:
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= self.MAX_FAILED_ATTEMPTS:
@@ -87,29 +133,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             user.lockout_until = None
             user.save()
 
-        # --- 3. Subscription Expiry Check (MOVED DOWN) ---
-        # ⭐️ Only check this if the password was correct
         if not (user.is_staff or user.is_superuser):
             if not user.is_subscription_active:
-                # Now we know the user is who they say they are, so it's safe to tell them about the plan
                 raise AuthenticationFailed("Your plan has expired. To login, you need to upgrade your account.")
 
-        
         self.user = user 
         refresh = self.get_token(self.user)
         
-        return {
+        user_data = AccountDashboardSerializer(self.user).data
+
+        response_data = {
             'refresh': str(refresh), 
             'access': str(refresh.access_token),
-            "id": str(self.user.id),
-            "username": str(self.user.username),
-            'salt': str(self.user.salt),
-            'encrypted_dek': str(self.user.encrypted_dek),
-            'subscription_plan': str(self.user.subscription_plan),
-            'upload_limit_mb': self.user.upload_limit_mb,
-            'is_locked': str(self.user.is_locked),
-            'days_left':str(self.user.days_left)
         }
+        response_data.update(user_data)
+        
+        return response_data
 
 class InitiateRecoverySerializer(serializers.Serializer):
     username = serializers.CharField(write_only=True)
@@ -131,12 +170,14 @@ class FinalizeRecoverySerializer(serializers.Serializer):
     new_salt = serializers.CharField(write_only=True)
     new_key_hash = serializers.CharField(write_only=True)
     new_encrypted_dek = serializers.CharField(write_only=True)
+    
     def validate(self, data):
         try:
             self.user = User.objects.get(username=data['username'])
         except User.DoesNotExist:
             raise serializers.ValidationError("User not found.")
         return data
+
     def save(self):
         user = self.user
         user.salt = self.validated_data['new_salt']
@@ -149,6 +190,7 @@ class PasswordChangeSerializer(serializers.Serializer):
     new_salt = serializers.CharField(write_only=True)
     new_key_hash = serializers.CharField(write_only=True)
     new_encrypted_dek = serializers.CharField(write_only=True)
+    
     def update(self, instance, validated_data):
         instance.salt = validated_data['new_salt']
         instance.key_hash = validated_data['new_key_hash']

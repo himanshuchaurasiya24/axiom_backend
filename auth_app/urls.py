@@ -3,5 +3,4 @@ from .views import UserAccountViewSet
 
 router = DefaultRouter()
 router.register(r'accounts', UserAccountViewSet, basename='account')
-
 urlpatterns = router.urls

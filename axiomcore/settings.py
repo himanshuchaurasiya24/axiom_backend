@@ -1,24 +1,31 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+
 def GB_TO_BYTES(gb):
     return gb*1024*1024*1024
+    
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-+@(awooy=f=qwd#@1(o_ou0$^i+s5*141#gi5$^emsgv$n8d!d'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-+@(awooy=f=qwd#@1(o_ou0$^i+s5*141#gi5$^emsgv$n8d!d')
+
 ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
+    '80.225.232.211',
     '10.0.2.2',
     '192.168.1.40', 
 ]
+
+DEBUG = os.environ.get('DEBUG', 'False') == 'True' 
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
     "http://10.0.2.2:8000", 
 ]
 CORS_ALLOW_ALL_ORIGINS = True
-DEBUG=True
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -30,7 +37,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'auth_app',
-    'encryptor.apps.EncryptorConfig', # UPDATED to load signals
+    'encryptor.apps.EncryptorConfig',
     'django_filters'
 ]
 
@@ -97,9 +104,11 @@ LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True
 USE_TZ = True
+
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles') 
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MINIMUM_APP_VERSION = '1.0.0'
-

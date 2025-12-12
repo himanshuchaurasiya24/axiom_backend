@@ -18,19 +18,14 @@ class AccountDashboardSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 
-            'username', 
-            'salt', 
-            'encrypted_dek', 
-            'subscription_plan', 
+            'subscription_plan',
             'plan_display',
-            'subscription_expiry', 
+            'subscription_expiry',
             'upload_limit_mb',
             'used_storage_mb',
             'used_storage_bytes',
             'remaining_storage_mb',
             'storage_usage_percentage',
-            'is_locked', 
             'days_left'
         ]
 
@@ -55,11 +50,22 @@ class AccountDashboardSerializer(serializers.ModelSerializer):
         percent = (used / limit) * 100
         return round(percent, 2)
 
+class CoreUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'username',
+            'salt',
+            'encrypted_dek',
+            'is_locked',
+        ]
+
 class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'username', 'salt', 'encrypted_dek', 'created_at', 
+            'id', 'username', 'salt', 'encrypted_dek', 'created_at',
             'subscription_plan', 'subscription_expiry', 'upload_limit_mb'
         ]
 
@@ -67,7 +73,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'username', 'salt', 'key_hash', 'encrypted_dek', 
+            'username', 'salt', 'key_hash', 'encrypted_dek',
             'recovery_encrypted_dek', 'recovery_key_hash', 'recovery_salt'
         ]
         extra_kwargs = {
@@ -93,8 +99,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     MAX_FAILED_ATTEMPTS = 3
-    LOCKOUT_DURATION = 15 
-    
+    LOCKOUT_DURATION = 15
+
     def validate(self, attrs):
         username = attrs.get('username')
         key_hash = attrs.get('password')
@@ -106,7 +112,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         if user.is_locked and not user.lockout_until:
              raise PermissionDenied("Account is locked. Please contact support.")
-        
+
         now = timezone.now()
         if user.is_locked and user.lockout_until and now < user.lockout_until:
             time_left = (user.lockout_until - now)
@@ -137,17 +143,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             if not user.is_subscription_active:
                 raise AuthenticationFailed("Your plan has expired. To login, you need to upgrade your account.")
 
-        self.user = user 
+        self.user = user
         refresh = self.get_token(self.user)
-        
-        user_data = AccountDashboardSerializer(self.user).data
+
+        user_data = CoreUserSerializer(self.user).data
 
         response_data = {
-            'refresh': str(refresh), 
+            'refresh': str(refresh),
             'access': str(refresh.access_token),
         }
         response_data.update(user_data)
-        
+
         return response_data
 
 class InitiateRecoverySerializer(serializers.Serializer):
@@ -170,7 +176,7 @@ class FinalizeRecoverySerializer(serializers.Serializer):
     new_salt = serializers.CharField(write_only=True)
     new_key_hash = serializers.CharField(write_only=True)
     new_encrypted_dek = serializers.CharField(write_only=True)
-    
+
     def validate(self, data):
         try:
             self.user = User.objects.get(username=data['username'])
@@ -190,7 +196,7 @@ class PasswordChangeSerializer(serializers.Serializer):
     new_salt = serializers.CharField(write_only=True)
     new_key_hash = serializers.CharField(write_only=True)
     new_encrypted_dek = serializers.CharField(write_only=True)
-    
+
     def update(self, instance, validated_data):
         instance.salt = validated_data['new_salt']
         instance.key_hash = validated_data['new_key_hash']

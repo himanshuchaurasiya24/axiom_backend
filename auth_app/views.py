@@ -10,26 +10,27 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from django.conf import settings
 from .models import User,SubscriptionPlan
 from .serializers import (
-    UserRegistrationSerializer, 
+    UserRegistrationSerializer,
     InitiateRecoverySerializer,
     FinalizeRecoverySerializer,
     UserDetailSerializer,
     PasswordChangeSerializer,
     CustomTokenObtainPairSerializer,
-    AccountDashboardSerializer
+    AccountDashboardSerializer,
+    CoreUserSerializer
 )
 from .permissions import IsSelfOrAdmin, IsSubscriptionActive
 
 class SubscriptionInfoView(APIView):
     """
-    Returns a list of all available subscription plans with their 
+    Returns a list of all available subscription plans with their
     configured limits and duration.
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
         plans_data = []
-        
+
         for plan in SubscriptionPlan:
             plans_data.append({
                 "plan_id": plan.value,             # e.g. "FREE", "STANDARD"
@@ -38,11 +39,11 @@ class SubscriptionInfoView(APIView):
                 "duration_days": plan.get_duration(),
                 "description": f"{plan.get_duration()} days validity with {plan.get_upload_limit()} MB storage."
             })
-            
+
         return Response(plans_data)
 
 class UserAccountViewSet(
-    mixins.CreateModelMixin, 
+    mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
     mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
@@ -50,7 +51,7 @@ class UserAccountViewSet(
     viewsets.GenericViewSet
 ):
     queryset = User.objects.all()
-    
+
     def get_serializer_class(self):
         if self.action == 'create':
             return UserRegistrationSerializer
@@ -60,12 +61,14 @@ class UserAccountViewSet(
             return FinalizeRecoverySerializer
         elif self.action == 'change_password':
             return PasswordChangeSerializer
-        return UserDetailSerializer 
+        elif self.action == 'account_dashboard':
+            return AccountDashboardSerializer
+        return UserDetailSerializer
 
     def get_queryset(self):
         user = self.request.user
         if user.is_authenticated and (user.is_staff or user.is_superuser):
-            return super().get_queryset()        
+            return super().get_queryset()
         return User.objects.filter(pk=user.pk)
 
     def get_permissions(self):
@@ -73,26 +76,35 @@ class UserAccountViewSet(
             self.permission_classes = [AllowAny]
         elif self.action == 'list':
             self.permission_classes = [IsAdminUser]
-        elif self.action in ['retrieve', 'update', 'partial_update', 'destroy']:
+        elif self.action in ['retrieve', 'update', 'partial_update', 'destroy', 'account_dashboard', 'change_password', 'me']:
             self.permission_classes = [IsAuthenticated, IsSelfOrAdmin, IsSubscriptionActive]
         else:
-            self.permission_classes = [IsAuthenticated, IsSubscriptionActive]            
+            self.permission_classes = [IsAuthenticated, IsSubscriptionActive]
         return super().get_permissions()
 
     def perform_update(self, serializer):
         user = self.request.user
         instance = self.get_object()
-        
+
         if 'subscription_plan' in serializer.validated_data:
             new_plan = serializer.validated_data['subscription_plan']
             current_plan = instance.subscription_plan
             if new_plan != current_plan and not (user.is_staff or user.is_superuser):
                 raise PermissionDenied("Only administrators can change the subscription plan manually.")
-        
+
         serializer.save()
 
     @action(detail=False, methods=['get'])
     def me(self, request):
+        user = request.user
+        serializer = self.get_serializer(user)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='account-dashboard')
+    def account_dashboard(self, request):
+        """
+        Returns subscription, storage, and usage data for the authenticated user's dashboard.
+        """
         user = request.user
         serializer = self.get_serializer(user)
         return Response(serializer.data)
@@ -154,17 +166,17 @@ class ValidateTokenView(APIView):
 
     def get(self, request):
         user = request.user
-        
+
         if user.is_locked:
             return Response({"detail": "User account is locked."}, status=status.HTTP_403_FORBIDDEN)
         if not (user.is_staff or user.is_superuser):
             if not user.is_subscription_active:
                 return Response(
-                    {"detail": "Your plan has expired. To login, you need to upgrade your account."}, 
+                    {"detail": "Your plan has expired. To login, you need to upgrade your account."},
                     status=status.HTTP_403_FORBIDDEN
                 )
-        
-        serializer = AccountDashboardSerializer(user)
+
+        serializer = CoreUserSerializer(user)
         return Response(serializer.data)
 
 class CustomTokenObtainPairView(TokenObtainPairView):

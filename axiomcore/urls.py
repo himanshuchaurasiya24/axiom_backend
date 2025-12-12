@@ -9,7 +9,7 @@ urlpatterns = [
     path('api/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
     path('verify-auth/', ValidateTokenView.as_view(), name='validate-token'),
     path('auth/', include('auth_app.urls')),
-    path('admin/', admin.site.urls),
+    path('axiom-admin/', admin.site.urls),
     path('api/', include('encryptor.urls')),
     path('', health_check),
     path('api/app-info/', AppInfoView.as_view(), name='app-info'),
